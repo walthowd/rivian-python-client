@@ -910,6 +910,35 @@ class Rivian:
             return (data.get("data", {}).get("places") or {}).get("results") or []
         return []
 
+    async def suggest_places(
+        self, query: str, latitude: float, longitude: float
+    ) -> list[str]:
+        """Suggest search texts for partial text, for type-ahead in a place search."""
+        url = GRAPHQL_GATEWAY
+        headers = BASE_HEADERS | {
+            "Csrf-Token": self._csrf_token,
+            "A-Sess": self._app_session_token,
+            "U-Sess": self._user_session_token,
+        }
+        graphql_json = {
+            "operationName": "places",
+            "query": "query places($params: PlacesQueryParams!) { places(params: $params) { queryPredictions { query } } }",
+            "variables": {
+                "params": {
+                    "query": query,
+                    "userLocation": {"latitude": latitude, "longitude": longitude},
+                    "autocomplete": "Place",
+                }
+            },
+        }
+
+        response = await self.__graphql_query(headers, url, graphql_json)
+        if response.status == 200:
+            data = await response.json()
+            places = data.get("data", {}).get("places") or {}
+            return [p["query"] for p in places.get("queryPredictions") or []]
+        return []
+
     async def share_location_to_vehicle(
         self, vehicle_id: str, location_url: str
     ) -> bool:

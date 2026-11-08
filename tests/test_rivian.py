@@ -668,6 +668,29 @@ async def test_search_places(aresponses: ResponsesMockServer) -> None:
         assert await rivian.search_places("REI", 40.175, -92.591) == []
 
 
+async def test_suggest_places(aresponses: ResponsesMockServer) -> None:
+    """Test suggesting search texts for partial text."""
+    predictions = [{"query": "restaurants"}, {"query": "Red Lobster"}]
+    requests = capture_requests(
+        aresponses,
+        {"data": {"places": {"queryPredictions": predictions}}},
+        {"data": {"places": None}},
+    )
+    async with aiohttp.ClientSession():
+        rivian = Rivian(
+            csrf_token="csrf",
+            app_session_token="token",
+            user_session_token="token",
+        )
+
+        assert await rivian.suggest_places("RE", 40.175, -92.591) == [
+            "restaurants",
+            "Red Lobster",
+        ]
+        assert requests[0]["variables"]["params"]["autocomplete"] == "Place"
+        assert await rivian.suggest_places("RE", 40.175, -92.591) == []
+
+
 async def test_send_vehicle_operation(aresponses: ResponsesMockServer) -> None:
     """Test sending vehicle operations."""
     requests = capture_requests(
