@@ -40,6 +40,7 @@ from .responses import (
     DELETE_DEPARTURE_SCHEDULE_RESPONSE,
     DEPART_NOW_RESPONSE,
     OTP_TOKEN_RESPONSE,
+    PLACES_RESPONSE,
     SEND_PARALLAX_PAYLOAD_RESPONSE,
     SEND_VEHICLE_OPERATION_RESPONSE,
     SET_CHARGING_SCHEDULES_RESPONSE,
@@ -645,6 +646,26 @@ async def test_start_gear_guard_live_stream(aresponses: ResponsesMockServer) -> 
             await rivian.start_gear_guard_live_stream(
                 "vehicle_id", "identity_id", vehicle_key, private_key, timeout=30
             )
+
+
+async def test_search_places(aresponses: ResponsesMockServer) -> None:
+    """Test searching for places."""
+    requests = capture_requests(aresponses, PLACES_RESPONSE, {"data": {"places": None}})
+    async with aiohttp.ClientSession():
+        rivian = Rivian(
+            csrf_token="csrf",
+            app_session_token="token",
+            user_session_token="token",
+        )
+
+        results = await rivian.search_places("REI", 40.175, -92.591)
+        assert results == PLACES_RESPONSE["data"]["places"]["results"]
+        assert requests[0]["variables"]["params"] == {
+            "query": "REI",
+            "userLocation": {"latitude": 40.175, "longitude": -92.591},
+            "autocomplete": "None",
+        }
+        assert await rivian.search_places("REI", 40.175, -92.591) == []
 
 
 async def test_send_vehicle_operation(aresponses: ResponsesMockServer) -> None:

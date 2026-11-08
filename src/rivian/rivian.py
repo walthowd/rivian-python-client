@@ -878,13 +878,46 @@ class Rivian:
             )
         return False
 
+    async def search_places(
+        self, query: str, latitude: float, longitude: float
+    ) -> list[dict[str, Any]]:
+        """Search for places like the Rivian app's map search.
+
+        Results come in the search's own order, each with a Google place `id`,
+        `name`, `location` and the `driveDetails` from `latitude`, `longitude`.
+        """
+        url = GRAPHQL_GATEWAY
+        headers = BASE_HEADERS | {
+            "Csrf-Token": self._csrf_token,
+            "A-Sess": self._app_session_token,
+            "U-Sess": self._user_session_token,
+        }
+        graphql_json = {
+            "operationName": "places",
+            "query": "query places($params: PlacesQueryParams!) { places(params: $params) { results { id name location { formattedAddress coordinate { latitude longitude } navCoordinate { latitude longitude } } driveDetails { driveDistance driveDuration } } } }",
+            "variables": {
+                "params": {
+                    "query": query,
+                    "userLocation": {"latitude": latitude, "longitude": longitude},
+                    "autocomplete": "None",
+                }
+            },
+        }
+
+        response = await self.__graphql_query(headers, url, graphql_json)
+        if response.status == 200:
+            data = await response.json()
+            return (data.get("data", {}).get("places") or {}).get("results") or []
+        return []
+
     async def share_location_to_vehicle(
         self, vehicle_id: str, location_url: str
     ) -> bool:
         """Send a location to the vehicle's navigation, waking it if needed.
 
-        `location_url` is a map link, such as a Google Maps share link or
-        `https://www.google.com/maps/search/?api=1&query=<lat>,<lng>`.
+        `location_url` is a map link, such as a Google Maps share link,
+        `https://www.google.com/maps/search/?api=1&query=<lat>,<lng>`, or
+        `utils.place_url(...)` for a `search_places` result.
         """
         url = GRAPHQL_GATEWAY
         headers = BASE_HEADERS | {
