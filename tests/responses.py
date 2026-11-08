@@ -647,6 +647,15 @@ SKIP_NEXT_SCHEDULED_DEPARTURE_RESPONSE = {
 }
 DEPART_NOW_RESPONSE = {"data": {"departNow": {"success": True}}}
 
+SEND_PARALLAX_PAYLOAD_RESPONSE = {
+    "data": {
+        "sendParallaxPayload": {
+            "__typename": "ParallaxResponse",
+            "success": True,
+        }
+    }
+}
+
 SEND_VEHICLE_OPERATION_RESPONSE = {
     "data": {
         "sendVehicleOperation": {

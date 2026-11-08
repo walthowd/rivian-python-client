@@ -10,6 +10,8 @@ Public API:
     encode_vehicle_operation(rvm, payload=b"", ...) -> str
         Builds a `send_vehicle_operation` request; an empty payload reads
         the RVM, anything else (e.g. `encode_climate_hold_setting`) writes it.
+    encode_parallax_command(rvm, payload, ...) -> str
+        Builds a signed `send_parallax_command` request.
 
 Layout:
     core.py  - registry, payload parsing and shared helpers
@@ -49,6 +51,7 @@ from .comfort import (
     CLIMATE_HOLD_STATUS_RVM,
     encode_climate_hold_setting,
 )
+from .command import encode_parallax_command
 from .core import (
     RVMDecoder,
     decode_parallax_message,
@@ -79,5 +82,6 @@ __all__ = [
     "decode_parallax_message",
     "decode_parallax_subscription_message",
     "encode_climate_hold_setting",
+    "encode_parallax_command",
     "encode_vehicle_operation",
 ]

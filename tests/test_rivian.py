@@ -28,7 +28,8 @@ from rivian.exceptions import (
     RivianTemporarilyLockedError,
     RivianUnauthenticated,
 )
-from rivian.parallax.proto import operation_pb2
+from rivian.parallax.proto import command_pb2, operation_pb2
+from rivian.utils import generate_key_pair
 
 from .responses import (
     AUTHENTICATION_OTP_RESPONSE,
@@ -38,6 +39,7 @@ from .responses import (
     DELETE_DEPARTURE_SCHEDULE_RESPONSE,
     DEPART_NOW_RESPONSE,
     OTP_TOKEN_RESPONSE,
+    SEND_PARALLAX_PAYLOAD_RESPONSE,
     SEND_VEHICLE_OPERATION_RESPONSE,
     SET_CHARGING_SCHEDULES_RESPONSE,
     SKIP_NEXT_SCHEDULED_DEPARTURE_RESPONSE,
@@ -457,6 +459,48 @@ def decode_vehicle_operation(
     """Decode the operation of a sendVehicleOperation request."""
     payload = base64.b64decode(request["variables"]["payload"])
     return operation_pb2.VehicleOperationRequest.FromString(payload).operation
+
+
+async def test_send_parallax_command(aresponses: ResponsesMockServer) -> None:
+    """Test sending a signed Parallax command."""
+    requests = capture_requests(
+        aresponses,
+        SEND_PARALLAX_PAYLOAD_RESPONSE,
+        {"data": {"sendParallaxPayload": None}},
+    )
+    vehicle_key, private_key = generate_key_pair()
+    keys = {
+        "identity_id": "identity_id",
+        "vehicle_key": vehicle_key,
+        "private_key": private_key,
+    }
+    async with aiohttp.ClientSession():
+        rivian = Rivian(
+            csrf_token="csrf",
+            app_session_token="token",
+            user_session_token="token",
+        )
+
+        assert await rivian.send_parallax_command(
+            "vehicle_id", "body.locks.unlock", b"\x08\x01", **keys
+        )
+        variables = requests[0]["variables"]
+        assert variables["meta"] == {
+            "isVehicleModelOp": True,
+            "model": "body.locks.unlock",
+            "requiresWakeup": True,
+            "vehicleId": "vehicle_id",
+        }
+        message = command_pb2.ParallaxPayload.FromString(
+            base64.b64decode(variables["payload"])
+        )
+        command = message.message.command
+        assert (command.rvm, command.payload) == ("body.locks.unlock", b"\x08\x01")
+        assert message.signature.identity_id == "identity_id"
+
+        assert not await rivian.send_parallax_command(
+            "vehicle_id", "body.locks.lock", **keys
+        )
 
 
 async def test_send_vehicle_operation(aresponses: ResponsesMockServer) -> None:

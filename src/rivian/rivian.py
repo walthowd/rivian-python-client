@@ -36,9 +36,10 @@ from .parallax import (
     CLIMATE_HOLD_SETTING_RVM,
     CLIMATE_HOLD_STATUS_RVM,
     encode_climate_hold_setting,
+    encode_parallax_command,
     encode_vehicle_operation,
 )
-from .utils import generate_vehicle_command_hmac
+from .utils import generate_vehicle_command_hmac, get_secret_key
 from .ws_monitor import WebSocketMonitor
 
 _LOGGER = logging.getLogger(__name__)
@@ -803,6 +804,56 @@ class Rivian:
             data = await response.json()
             return bool(
                 (data.get("data", {}).get("sendVehicleOperation") or {}).get("success")
+            )
+        return False
+
+    async def send_parallax_command(
+        self,
+        vehicle_id: str,
+        rvm: str,
+        payload: bytes = b"",
+        *,
+        identity_id: str,
+        vehicle_key: str,
+        private_key: str,
+    ) -> bool:
+        """Send a signed Parallax command to the vehicle, waking it if needed.
+
+        Like `send_vehicle_command`, this needs an enrolled and paired phone. The
+        cloud also accepts unsigned or wrongly signed commands, which the vehicle
+        ignores, so `True` only means the request was accepted.
+        """
+        url = GRAPHQL_GATEWAY
+        headers = BASE_HEADERS | {
+            "Csrf-Token": self._csrf_token,
+            "A-Sess": self._app_session_token,
+            "U-Sess": self._user_session_token,
+        }
+        graphql_json = {
+            "operationName": "SendParallaxPayload",
+            "query": "mutation SendParallaxPayload($payload: String!, $meta: ParallaxMetaInput!) { sendParallaxPayload(payload: $payload, meta: $meta) { __typename success } }",
+            "variables": {
+                "payload": encode_parallax_command(
+                    rvm,
+                    payload,
+                    vehicle_id,
+                    identity_id,
+                    get_secret_key(private_key, vehicle_key),
+                ),
+                "meta": {
+                    "isVehicleModelOp": True,
+                    "model": rvm,
+                    "requiresWakeup": True,
+                    "vehicleId": vehicle_id,
+                },
+            },
+        }
+
+        response = await self.__graphql_query(headers, url, graphql_json)
+        if response.status == 200:
+            data = await response.json()
+            return bool(
+                (data.get("data", {}).get("sendParallaxPayload") or {}).get("success")
             )
         return False
 

@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package rivian.parallax.command;
+
+// Reverse-engineered signed `sendParallaxPayload` request; see ../command.py.
+
+message ParallaxPayload {
+  Message message = 10;
+  Timestamp timestamp = 12;
+  bytes request_id = 16; // 16 random bytes
+  Signature signature = 17;
+
+  message Message {
+    Command command = 2;
+  }
+}
+
+// The signed part: the HMAC covers this message's serialized bytes.
+message Command {
+  string rvm = 1;
+  int32 field_2 = 2; // unknown; always 3
+  bytes request_id = 3; // as ParallaxPayload.request_id
+  bytes payload = 4; // the RVM's message
+  Timestamp timestamp = 5;
+  string vehicle_id = 7;
+}
+
+message Signature {
+  Hmac hmac = 1;
+  string identity_id = 2; // the enrolled phone's identity id for the vehicle
+
+  message Hmac {
+    HmacAlgorithm algorithm = 1;
+    bytes mac = 2;
+  }
+}
+
+enum HmacAlgorithm {
+  HMAC_ALGORITHM_UNSPECIFIED = 0;
+  HMAC_SHA256 = 1;
+}
+
+message Timestamp {
+  int64 seconds = 1;
+  int32 nanos = 2;
+}
