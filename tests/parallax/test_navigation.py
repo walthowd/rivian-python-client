@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+
+from rivian.parallax import encode_end_trip
 from rivian.parallax.proto import navigation_pb2 as nav
 
 from .helpers import decode, epoch
@@ -181,3 +184,20 @@ def test_trip_progress() -> None:
         "bearing": 0.0,
         "locationTime": epoch(1790553428211),
     }
+
+
+def test_encode_end_trip() -> None:
+    """Ending a trip sends an end_trip route, empty settings and the user."""
+    raw = base64.b64decode(
+        encode_end_trip("user", request_id=bytes(16), timestamp=1762600000.25)
+    )
+    payload = nav.UpdatedTripPayload.FromString(raw)
+    trip = payload.message.trip
+    assert trip.route.route_id == "end_trip_1762600000250"
+    assert trip.HasField("settings")
+    assert trip.user.user_id == "user"
+    assert (payload.timestamp.seconds, payload.timestamp.nanos) == (
+        1762600000,
+        250000000,
+    )
+    assert payload.request_id == bytes(16)

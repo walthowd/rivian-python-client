@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import time
+import uuid
 from datetime import datetime
 from typing import Any, Final
 
@@ -10,6 +13,29 @@ from google.protobuf.message import Message
 from ..utils import from_epoch
 from .core import RVMDecoder, _enum, _present
 from .proto import navigation_pb2
+
+UPDATED_TRIP_MODEL: Final = "c2v_navigation.trip_copilot.updated_trip"
+
+
+def encode_end_trip(
+    user_id: str,
+    *,
+    request_id: bytes | None = None,
+    timestamp: float | None = None,
+) -> str:
+    """Encode an unsigned `sendParallaxPayload` that ends the vehicle's trip."""
+    now = time.time() if timestamp is None else timestamp
+    trip = navigation_pb2.UpdatedTrip(
+        route=navigation_pb2.UpdatedTrip.Route(route_id=f"end_trip_{int(now * 1000)}"),
+        user=navigation_pb2.UpdatedTrip.User(user_id=user_id),
+    )
+    trip.settings.SetInParent()  # present but empty, as the app sends it
+    message = navigation_pb2.UpdatedTripPayload(
+        message=navigation_pb2.UpdatedTripPayload.Message(trip=trip),
+        timestamp=navigation_pb2.Timestamp(seconds=int(now), nanos=int(now % 1 * 1e9)),
+        request_id=request_id or uuid.uuid4().bytes,
+    )
+    return base64.b64encode(message.SerializeToString()).decode("utf-8")
 
 
 def _parse_route_switches(raw: list[str]) -> dict[str, bool]:
