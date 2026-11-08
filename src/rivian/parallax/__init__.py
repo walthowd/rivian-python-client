@@ -12,6 +12,11 @@ Public API:
         the RVM, anything else (e.g. `encode_climate_hold_setting`) writes it.
     encode_parallax_command(rvm, payload, ...) -> str
         Builds a signed `send_parallax_command` request.
+    vehicle_command_feature(command) -> str | None
+        The supported feature that, when AVAILABLE, sends a `VehicleCommand`
+        over Parallax.
+    encode_vehicle_command(command, params=None, model=None) -> (rvm, payload)
+        The command's Parallax equivalent, for `send_parallax_command`.
 
 Layout:
     core.py  - registry, payload parsing and shared helpers
@@ -58,6 +63,7 @@ from .core import (
     decode_parallax_subscription_message,
 )
 from .operation import encode_vehicle_operation
+from .vehicle_command import encode_vehicle_command, vehicle_command_feature
 
 PARALLAX_RVMS: list[str] = list(RVMDecoder.decoders)
 
@@ -83,5 +89,7 @@ __all__ = [
     "decode_parallax_subscription_message",
     "encode_climate_hold_setting",
     "encode_parallax_command",
+    "encode_vehicle_command",
     "encode_vehicle_operation",
+    "vehicle_command_feature",
 ]

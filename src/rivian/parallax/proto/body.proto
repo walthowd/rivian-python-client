@@ -48,6 +48,16 @@ enum ClosureId {
   GROUP_WINDOWS = 10000; // all windows together
 }
 
+// body.closures.open and body.closures.close
+message ClosuresRequest {
+  repeated ClosureId closures = 1;
+}
+
+// body.locks.unlock
+message UnlockRequest {
+  bool all = 1; // inferred; the app always sends true
+}
+
 enum ClosureState {
   CLOSURE_STATE_UNSPECIFIED = 0;
   CLOSURE_STATE_OPEN = 1;
