@@ -22,6 +22,9 @@ Public API:
         over Parallax.
     encode_vehicle_command(command, params=None) -> (rvm, payload)
         The command's Parallax equivalent, for `send_parallax_command`.
+    encode_climate_hold(on), encode_pet_mode(on) -> bytes
+        Payloads for the signed SET_CLIMATE_HOLD_RVM and SET_PET_MODE_RVM
+        commands.
 
 Layout:
     core.py           - registry, payload parsing and shared helpers
@@ -61,7 +64,11 @@ from .body import LOCK_RVM, UNLOCK_RVM, encode_lock, encode_unlock
 from .comfort import (
     CLIMATE_HOLD_SETTING_RVM,
     CLIMATE_HOLD_STATUS_RVM,
+    SET_CLIMATE_HOLD_RVM,
+    SET_PET_MODE_RVM,
+    encode_climate_hold,
     encode_climate_hold_setting,
+    encode_pet_mode,
 )
 from .command import decode_command_state_message, encode_command
 from .core import (
@@ -93,13 +100,17 @@ __all__ = [
     "CLIMATE_HOLD_STATUS_RVM",
     "LOCK_RVM",
     "PARALLAX_RVMS",
+    "SET_CLIMATE_HOLD_RVM",
+    "SET_PET_MODE_RVM",
     "UNLOCK_RVM",
     "decode_command_state_message",
     "decode_parallax_message",
     "decode_parallax_subscription_message",
+    "encode_climate_hold",
     "encode_climate_hold_setting",
     "encode_command",
     "encode_lock",
+    "encode_pet_mode",
     "encode_unlock",
     "encode_vehicle_command",
     "encode_vehicle_operation",
