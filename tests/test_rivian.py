@@ -42,6 +42,7 @@ from .responses import (
     SEND_PARALLAX_PAYLOAD_RESPONSE,
     SEND_VEHICLE_OPERATION_RESPONSE,
     SET_CHARGING_SCHEDULES_RESPONSE,
+    SHARE_LOCATION_RESPONSE,
     SKIP_NEXT_SCHEDULED_DEPARTURE_RESPONSE,
     UPDATE_DEPARTURE_SCHEDULE_RESPONSE,
     USER_INFORMATION_RESPONSE,
@@ -501,6 +502,30 @@ async def test_send_parallax_command(aresponses: ResponsesMockServer) -> None:
         assert not await rivian.send_parallax_command(
             "vehicle_id", "body.locks.lock", **keys
         )
+
+
+async def test_share_location_to_vehicle(aresponses: ResponsesMockServer) -> None:
+    """Test sending a location to the vehicle's navigation."""
+    location = "https://www.google.com/maps/search/?api=1&query=39.05,-94.48"
+    requests = capture_requests(
+        aresponses,
+        SHARE_LOCATION_RESPONSE,
+        {"data": {"parseAndShareLocationToVehicle": None}},
+    )
+    async with aiohttp.ClientSession():
+        rivian = Rivian(
+            csrf_token="csrf",
+            app_session_token="token",
+            user_session_token="token",
+        )
+
+        assert await rivian.share_location_to_vehicle("vehicle_id", location)
+        assert requests[0]["variables"] == {
+            "locationUrl": location,
+            "vehicleId": "vehicle_id",
+            "requiresWakeup": True,
+        }
+        assert not await rivian.share_location_to_vehicle("vehicle_id", location)
 
 
 async def test_send_vehicle_operation(aresponses: ResponsesMockServer) -> None:

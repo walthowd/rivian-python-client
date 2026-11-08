@@ -656,6 +656,10 @@ SEND_PARALLAX_PAYLOAD_RESPONSE = {
     }
 }
 
+SHARE_LOCATION_RESPONSE = {
+    "data": {"parseAndShareLocationToVehicle": {"publishResponse": {"result": 0}}}
+}
+
 SEND_VEHICLE_OPERATION_RESPONSE = {
     "data": {
         "sendVehicleOperation": {
