@@ -35,9 +35,12 @@ from .exceptions import (
 from .parallax import (
     CLIMATE_HOLD_SETTING_RVM,
     CLIMATE_HOLD_STATUS_RVM,
+    GEAR_GUARD_CAMERAS,
+    START_LIVE_STREAMING_RVM,
     UPDATED_TRIP_MODEL,
     encode_climate_hold_setting,
     encode_end_trip,
+    encode_live_streaming,
     encode_parallax_command,
     encode_vehicle_operation,
 )
@@ -832,6 +835,7 @@ class Rivian:
         identity_id: str,
         vehicle_key: str,
         private_key: str,
+        request_id: bytes | None = None,
     ) -> bool:
         """Send a signed Parallax command to the vehicle, waking it if needed.
 
@@ -855,6 +859,7 @@ class Rivian:
                     vehicle_id,
                     identity_id,
                     get_secret_key(private_key, vehicle_key),
+                    request_id=request_id,
                 ),
                 "meta": {
                     "isVehicleModelOp": True,
@@ -1010,6 +1015,78 @@ class Rivian:
                 (data.get("data", {}).get("sendParallaxPayload") or {}).get("success")
             )
         return False
+
+    async def start_gear_guard_live_stream(
+        self,
+        vehicle_id: str,
+        identity_id: str,
+        vehicle_key: str,
+        private_key: str,
+        camera: str = "front",
+        *,
+        device_id: str = "rivian-python-client",
+        timeout: float = 40,
+    ) -> dict[str, Any] | None:
+        """Start a Gear Guard live stream and return its Kinesis WebRTC config.
+
+        `camera` is a `parallax.GEAR_GUARD_CAMERAS` key. Needs Gear Guard video
+        monitoring on and a paired phone; the vehicle serves one viewer at a time,
+        about 3 minutes each and an hour a day. None if the start fails or no config
+        arrives within `timeout` seconds (a sleeping vehicle may need longer).
+        Raises RivianApiException if the vehicle refuses the stream, e.g. for a
+        camera it doesn't have.
+        """
+        if camera not in GEAR_GUARD_CAMERAS:
+            raise RivianBadRequestError(f"Unknown camera: {camera}")
+        request_id = uuid.uuid4().bytes
+        config: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
+
+        def on_message(message: dict[str, Any]) -> None:
+            data = (message.get("payload") or {}).get("data") or {}
+            live = data.get("gearGuardLiveConfig") or {}
+            if live.get("endpoint") and not config.done():
+                config.set_result(live)
+
+        def on_error(message: dict[str, Any]) -> None:
+            errors = message.get("payload") or [{}]
+            reason = (errors[0].get("extensions") or {}).get("reason")
+            if not config.done():
+                config.set_exception(
+                    RivianApiException(f"The vehicle refused the stream: {reason}")
+                )
+
+        # The cloud sends the config to the subscription whose commandId is the
+        # start command's request id
+        unsubscribe = await self._start_subscription(
+            {
+                "operationName": "GearGuardLiveConfigSubscription",
+                "query": "subscription GearGuardLiveConfigSubscription($vehicleId: String!, $commandId: String!) { gearGuardLiveConfig(vehicleId: $vehicleId, commandId: $commandId) { __typename endpoint channelArn role iceServers { __typename url username credential ttl } } }",
+                "variables": {"vehicleId": vehicle_id, "commandId": request_id.hex()},
+            },
+            on_message,
+            f"{vehicle_id} Gear Guard live config",
+            on_error,
+        )
+        if not unsubscribe:
+            return None
+        try:
+            if not await self.send_parallax_command(
+                vehicle_id,
+                START_LIVE_STREAMING_RVM,
+                encode_live_streaming(camera, device_id),
+                identity_id=identity_id,
+                vehicle_key=vehicle_key,
+                private_key=private_key,
+                request_id=request_id,
+            ):
+                return None
+            return await asyncio.wait_for(config, timeout)
+        except TimeoutError:
+            return None
+        finally:
+            await unsubscribe()
 
     async def request_climate_hold_status(self, vehicle_id: str) -> bool:
         """Ask the vehicle to publish its climate hold status."""

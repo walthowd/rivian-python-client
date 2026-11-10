@@ -12,6 +12,8 @@ Public API:
         the RVM, anything else (e.g. `encode_climate_hold_setting`) writes it.
     encode_parallax_command(rvm, payload, ...) -> str
         Builds a signed `send_parallax_command` request.
+    encode_live_streaming(camera, device_id) -> bytes
+        A Gear Guard live stream start, for `start_gear_guard_live_stream`.
     vehicle_command_feature(command) -> str | None
         The supported feature that, when AVAILABLE, sends a `VehicleCommand`
         over Parallax.
@@ -73,6 +75,11 @@ from .core import (
 )
 from .navigation import UPDATED_TRIP_MODEL, encode_end_trip
 from .operation import encode_vehicle_operation
+from .security import (
+    GEAR_GUARD_CAMERAS,
+    START_LIVE_STREAMING_RVM,
+    encode_live_streaming,
+)
 from .vehicle_command import encode_vehicle_command, vehicle_command_feature
 
 PARALLAX_RVMS: list[str] = list(RVMDecoder.decoders)
@@ -94,15 +101,18 @@ __all__ = [
     "CHARGING_RVMS",
     "CLIMATE_HOLD_SETTING_RVM",
     "CLIMATE_HOLD_STATUS_RVM",
+    "GEAR_GUARD_CAMERAS",
     "PARALLAX_RVMS",
     "SET_CLIMATE_HOLD_RVM",
     "SET_PET_MODE_RVM",
+    "START_LIVE_STREAMING_RVM",
     "UPDATED_TRIP_MODEL",
     "decode_parallax_message",
     "decode_parallax_subscription_message",
     "encode_climate_hold",
     "encode_climate_hold_setting",
     "encode_end_trip",
+    "encode_live_streaming",
     "encode_parallax_command",
     "encode_pet_mode",
     "encode_vehicle_command",
