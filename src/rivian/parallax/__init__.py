@@ -25,6 +25,8 @@ Public API:
     encode_climate_hold(on), encode_pet_mode(on) -> bytes
         Payloads for the signed SET_CLIMATE_HOLD_RVM and SET_PET_MODE_RVM
         commands.
+    encode_end_trip(user_id) -> str
+        Builds the unsigned `end_trip` request.
 
 Layout:
     core.py           - registry, payload parsing and shared helpers
@@ -76,6 +78,7 @@ from .core import (
     decode_parallax_message,
     decode_parallax_subscription_message,
 )
+from .navigation import UPDATED_TRIP_MODEL, encode_end_trip
 from .operation import encode_vehicle_operation
 from .vehicle_command import encode_vehicle_command, vehicle_command_feature
 
@@ -103,12 +106,14 @@ __all__ = [
     "SET_CLIMATE_HOLD_RVM",
     "SET_PET_MODE_RVM",
     "UNLOCK_RVM",
+    "UPDATED_TRIP_MODEL",
     "decode_command_state_message",
     "decode_parallax_message",
     "decode_parallax_subscription_message",
     "encode_climate_hold",
     "encode_climate_hold_setting",
     "encode_command",
+    "encode_end_trip",
     "encode_lock",
     "encode_pet_mode",
     "encode_unlock",
