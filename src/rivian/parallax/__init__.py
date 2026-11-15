@@ -17,6 +17,10 @@ Public API:
         The RVM and payload of a signed lock or unlock command.
     decode_command_state_message(data) -> dict | None
         Reads a raw `subscribe_for_parallax_command_state` message.
+    encode_end_trip(user_id) -> str
+        Builds the unsigned `end_trip` request.
+    encode_live_streaming(camera, device_id) -> bytes
+        A Gear Guard live stream start, for `start_gear_guard_live_stream`.
 
 Layout:
     core.py           - registry, payload parsing and shared helpers
@@ -64,7 +68,13 @@ from .core import (
     decode_parallax_message,
     decode_parallax_subscription_message,
 )
+from .navigation import UPDATED_TRIP_MODEL, encode_end_trip
 from .operation import encode_vehicle_operation
+from .security import (
+    GEAR_GUARD_CAMERAS,
+    START_LIVE_STREAMING_RVM,
+    encode_live_streaming,
+)
 
 PARALLAX_RVMS: list[str] = list(RVMDecoder.decoders)
 
@@ -85,14 +95,19 @@ __all__ = [
     "CHARGING_RVMS",
     "CLIMATE_HOLD_SETTING_RVM",
     "CLIMATE_HOLD_STATUS_RVM",
+    "GEAR_GUARD_CAMERAS",
     "LOCK_RVM",
     "PARALLAX_RVMS",
+    "START_LIVE_STREAMING_RVM",
     "UNLOCK_RVM",
+    "UPDATED_TRIP_MODEL",
     "decode_command_state_message",
     "decode_parallax_message",
     "decode_parallax_subscription_message",
     "encode_climate_hold_setting",
     "encode_command",
+    "encode_end_trip",
+    "encode_live_streaming",
     "encode_lock",
     "encode_unlock",
     "encode_vehicle_operation",

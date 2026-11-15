@@ -34,8 +34,13 @@ from .exceptions import (
 from .parallax import (
     CLIMATE_HOLD_SETTING_RVM,
     CLIMATE_HOLD_STATUS_RVM,
+    GEAR_GUARD_CAMERAS,
+    START_LIVE_STREAMING_RVM,
+    UPDATED_TRIP_MODEL,
     encode_climate_hold_setting,
     encode_command,
+    encode_end_trip,
+    encode_live_streaming,
     encode_vehicle_operation,
 )
 from .utils import generate_vehicle_command_hmac, send_deprecation_warning
@@ -71,6 +76,23 @@ TEMPLATE_MAP = {
     "gnssError": LOCATION_ERROR_TEMPLATE,
 }
 QUERY_TEMPLATE_MAP = TEMPLATE_MAP | {"gnssLocation": QUERY_LOCATION_TEMPLATE}
+
+# Charging network ids the Rivian app sends with a trip. The vehicle plans its own
+# charging stops, and these were a soft preference with no visible effect, so all
+# are always sent.
+_CHARGING_NETWORK_IDS = (
+    "10001",  # Rivian Adventure
+    "10002",  # Rivian Waypoints
+    "10025",  # ChargePoint
+    "10027",  # Electrify America
+    "10030",  # EV Connect
+    "10031",  # EVgo
+    "10032",  # FLO
+    "10033",  # FLO
+    "10045",  # Shell Recharge
+    "10050",  # Tesla
+    "10056",  # IONNA
+)
 
 # Minutes; the durations the Rivian app offers
 CLIMATE_HOLD_DURATIONS = range(120, 481, 15)
@@ -644,13 +666,75 @@ class Rivian:
         }
         return await self.__graphql_query(headers, url, graphql_json)
 
+    async def search_places(
+        self, query: str, latitude: float, longitude: float
+    ) -> list[dict[str, Any]]:
+        """Search for places like the Rivian app's map search.
+
+        Results come in the search's own order, each with a Google place `id`,
+        `name`, `location` and the `driveDetails` from `latitude`, `longitude`.
+        """
+        url = GRAPHQL_GATEWAY
+        headers = BASE_HEADERS | {
+            "Csrf-Token": self._csrf_token,
+            "A-Sess": self._app_session_token,
+            "U-Sess": self._user_session_token,
+        }
+        graphql_json = {
+            "operationName": "places",
+            "query": "query places($params: PlacesQueryParams!) { places(params: $params) { results { id name location { formattedAddress coordinate { latitude longitude } navCoordinate { latitude longitude } } driveDetails { driveDistance driveDuration } } } }",
+            "variables": {
+                "params": {
+                    "query": query,
+                    "userLocation": {"latitude": latitude, "longitude": longitude},
+                    "autocomplete": "None",
+                }
+            },
+        }
+
+        response = await self.__graphql_query(headers, url, graphql_json)
+        if response.status == 200:
+            data = await response.json()
+            return (data.get("data", {}).get("places") or {}).get("results") or []
+        return []
+
+    async def suggest_places(
+        self, query: str, latitude: float, longitude: float
+    ) -> list[str]:
+        """Suggest search texts for partial text, for type-ahead in a place search."""
+        url = GRAPHQL_GATEWAY
+        headers = BASE_HEADERS | {
+            "Csrf-Token": self._csrf_token,
+            "A-Sess": self._app_session_token,
+            "U-Sess": self._user_session_token,
+        }
+        graphql_json = {
+            "operationName": "places",
+            "query": "query places($params: PlacesQueryParams!) { places(params: $params) { queryPredictions { query } } }",
+            "variables": {
+                "params": {
+                    "query": query,
+                    "userLocation": {"latitude": latitude, "longitude": longitude},
+                    "autocomplete": "Place",
+                }
+            },
+        }
+
+        response = await self.__graphql_query(headers, url, graphql_json)
+        if response.status == 200:
+            data = await response.json()
+            places = data.get("data", {}).get("places") or {}
+            return [p["query"] for p in places.get("queryPredictions") or []]
+        return []
+
     async def send_location_to_vehicle(
         self, vehicle_id: str, location: str
     ) -> ClientResponse:
-        """Send a destination to a vehicle's navigation.
+        """Send a destination to a vehicle's navigation, waking it if needed.
 
-        `location` is an address, a place, or coordinates as "lat,lng", and Rivian
-        parses it. A `publishResponse.result` of 0 means the request was accepted.
+        `location` is an address, a place, coordinates as "lat,lng", or a map link,
+        and Rivian parses it. A `publishResponse.result` of 0 means the request was
+        accepted.
         """
         url = GRAPHQL_GATEWAY
         headers = BASE_HEADERS | {
@@ -660,10 +744,193 @@ class Rivian:
         }
         graphql_json = {
             "operationName": "parseAndShareLocationToVehicle",
-            "query": "mutation parseAndShareLocationToVehicle($str: String!, $vehicleId: String!) { parseAndShareLocationToVehicle(str: $str, vehicleId: $vehicleId) { __typename publishResponse { __typename result } } }",
-            "variables": {"str": location, "vehicleId": vehicle_id},
+            "query": "mutation parseAndShareLocationToVehicle($str: String!, $vehicleId: String!, $requiresWakeup: Boolean) { parseAndShareLocationToVehicle(str: $str, vehicleId: $vehicleId, requiresWakeup: $requiresWakeup) { __typename publishResponse { __typename result } } }",
+            "variables": {
+                "str": location,
+                "vehicleId": vehicle_id,
+                "requiresWakeup": True,
+            },
         }
         return await self.__graphql_query(headers, url, graphql_json)
+
+    async def send_trip_to_vehicle(
+        self,
+        vehicle_id: str,
+        origin: tuple[float, float],
+        stops: list[tuple[str, float, float]],
+        min_arrival_soc: int = 20,
+    ) -> bool:
+        """Send a trip to the vehicle's navigation, waking it if needed.
+
+        `origin` is the vehicle's (latitude, longitude) and `stops` are (name,
+        latitude, longitude) in order. The vehicle plans the route and charging
+        stops itself, arriving with at least `min_arrival_soc` percent. The vehicle
+        ignores it while navigating another trip, so end that one first.
+        """
+        if not stops:
+            raise RivianBadRequestError("A trip needs at least one stop")
+        if not 0 <= min_arrival_soc <= 100:
+            raise RivianBadRequestError("Minimum arrival charge must be 0 to 100")
+        url = GRAPHQL_GATEWAY
+        headers = BASE_HEADERS | {
+            "Csrf-Token": self._csrf_token,
+            "A-Sess": self._app_session_token,
+            "U-Sess": self._user_session_token,
+        }
+        waypoints: list[dict[str, Any]] = [
+            {
+                "address": {
+                    "name": name,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "address": "",
+                    "addressSourceId": "",
+                }
+            }
+            for name, latitude, longitude in [("Vehicle location", *origin), *stops]
+        ]
+        waypoints[-1]["minArrivalSoC"] = min_arrival_soc
+        graphql_json = {
+            "operationName": "sendTripToVehicle",
+            "query": "mutation sendTripToVehicle($attrs: SendTripToVehicleInput!) { sendTripToVehicle(attrs: $attrs) }",
+            "variables": {
+                "attrs": {
+                    "preferences": {
+                        "avoidAdapterRequired": False,
+                        "networks": [
+                            {"networkId": network_id}
+                            for network_id in _CHARGING_NETWORK_IDS
+                        ],
+                    },
+                    "requiresWakeup": True,
+                    "routePreferences": {
+                        "avoidFerries": False,
+                        "avoidHighways": False,
+                        "avoidTolls": False,
+                    },
+                    "vehicleId": vehicle_id,
+                    "waypoints": waypoints,
+                }
+            },
+        }
+
+        response = await self.__graphql_query(headers, url, graphql_json)
+        if response.status == 200:
+            data = await response.json()
+            return bool(data.get("data", {}).get("sendTripToVehicle"))
+        return False
+
+    async def end_trip(self, vehicle_id: str, user_id: str) -> bool:
+        """End the trip the vehicle is navigating, waking it if needed.
+
+        `user_id` is the signed-in user's id from `get_user_information`.
+        """
+        url = GRAPHQL_GATEWAY
+        headers = BASE_HEADERS | {
+            "Csrf-Token": self._csrf_token,
+            "A-Sess": self._app_session_token,
+            "U-Sess": self._user_session_token,
+        }
+        graphql_json = {
+            "operationName": "SendUpdatedTrip",
+            "query": "mutation SendUpdatedTrip($payload: String!, $meta: ParallaxMetaInput!) { sendParallaxPayload(payload: $payload, meta: $meta) { success } }",
+            "variables": {
+                "payload": encode_end_trip(user_id),
+                "meta": {
+                    "isVehicleModelOp": False,
+                    "model": UPDATED_TRIP_MODEL,
+                    "requiresWakeup": True,
+                    "vehicleId": vehicle_id,
+                },
+            },
+        }
+
+        response = await self.__graphql_query(headers, url, graphql_json)
+        if response.status == 200:
+            data = await response.json()
+            return bool(
+                (data.get("data", {}).get("sendParallaxPayload") or {}).get("success")
+            )
+        return False
+
+    async def start_gear_guard_live_stream(
+        self,
+        vehicle_id: str,
+        camera: str = "front",
+        *,
+        identity_id: str,
+        vehicle_key: str,
+        private_key: str,
+        device_id: str = "rivian-python-client",
+        timeout: float = 40,
+    ) -> dict[str, Any] | None:
+        """Start a Gear Guard live stream and return its Kinesis WebRTC config.
+
+        `camera` is a `parallax.GEAR_GUARD_CAMERAS` key. Needs Gear Guard video
+        monitoring on and a paired phone; the vehicle serves one viewer at a time,
+        about 3 minutes each and an hour a day. None if the start fails or no config
+        arrives within `timeout` seconds (a sleeping vehicle may need longer).
+        Raises RivianApiException if the vehicle refuses the stream, e.g. for a
+        camera it doesn't have.
+        """
+        if camera not in GEAR_GUARD_CAMERAS:
+            raise RivianBadRequestError(f"Unknown camera: {camera}")
+        command_id = str(uuid.uuid4())
+        config: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
+
+        def on_message(message: dict[str, Any]) -> None:
+            data = (message.get("payload") or {}).get("data") or {}
+            live = data.get("gearGuardLiveConfig") or {}
+            if live.get("endpoint") and not config.done():
+                config.set_result(live)
+
+        def on_error(message: dict[str, Any]) -> None:
+            payload = message.get("payload") or [{}]
+            error = (payload if isinstance(payload, list) else [payload])[0]
+            reason = (error.get("extensions") or {}).get("reason")
+            if not config.done():
+                config.set_exception(
+                    RivianApiException(f"The vehicle refused the stream: {reason}")
+                )
+
+        # The cloud sends the config to the subscription whose commandId is the
+        # start command's id, as hex
+        unsubscribe = await self._start_subscription(
+            {
+                "operationName": "GearGuardLiveConfigSubscription",
+                "query": "subscription GearGuardLiveConfigSubscription($vehicleId: String!, $commandId: String!) { gearGuardLiveConfig(vehicleId: $vehicleId, commandId: $commandId) { __typename endpoint channelArn role iceServers { __typename url username credential ttl } } }",
+                "variables": {
+                    "vehicleId": vehicle_id,
+                    "commandId": uuid.UUID(command_id).hex,
+                },
+            },
+            on_message,
+            f"{vehicle_id} Gear Guard live config",
+            on_error,
+        )
+        if not unsubscribe:
+            return None
+        try:
+            if not await self.send_parallax_command(
+                vehicle_id,
+                START_LIVE_STREAMING_RVM,
+                encode_live_streaming(camera, device_id),
+                identity_id=identity_id,
+                vehicle_key=vehicle_key,
+                private_key=private_key,
+                command_id=command_id,
+            ):
+                return None
+            return await asyncio.wait_for(config, timeout)
+        except TimeoutError:
+            return None
+        finally:
+            await unsubscribe()
+            # Read a refusal left on the future by an early return, or asyncio logs it
+            if config.done() and not config.cancelled():
+                config.exception()
 
     async def get_vehicle_ota_update_details(self, vehicle_id: str) -> ClientResponse:
         """Get vehicle OTA update details."""
@@ -1012,6 +1279,7 @@ class Rivian:
         payload: dict[str, Any],
         callback: Callable[[dict[str, Any]], None],
         description: str,
+        on_error: Callable[[dict[str, Any]], None] | None = None,
     ) -> Callable[[], Awaitable[None]] | None:
         """Connect the web socket if needed and start a subscription.
 
@@ -1022,7 +1290,9 @@ class Rivian:
             ws_monitor = await self._ws_connect()
             # Ends early if the connection closes, e.g. when rate limited
             if await ws_monitor.wait_for_ack() and (
-                unsubscribe := await ws_monitor.start_subscription(payload, callback)
+                unsubscribe := await ws_monitor.start_subscription(
+                    payload, callback, on_error=on_error
+                )
             ):
                 _LOGGER.debug("Subscribed to %s", description)
                 return unsubscribe
