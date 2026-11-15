@@ -74,6 +74,18 @@ message ClimateHoldSetting {
   int32 duration = 1; // seconds; empty payload when no hold is set
 }
 
+// comfort.cabin.set_climate_hold and comfort.cabin.set_pet_mode; the names
+// are the app's
+message ActionRequest {
+  Action action = 1;
+}
+
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_ON = 1;
+  ACTION_OFF = 2;
+}
+
 // comfort.cabin.climate_hold_status
 message ClimateHoldStatus {
   ClimateHoldStatusValue status = 1;
@@ -119,6 +131,30 @@ enum DefrostStatus {
   DEFROST_ACTIVE = 2;
   DEFROST_DEFOG_DEFROST = 3;
   DEFROST_OFF = 4;
+}
+
+// comfort.cabin.set_defrost_defog
+message DefrostDefogRequest {
+  DefrostStatus status = 1; // the app sends DEFROST_DEFOG_DEFROST or DEFROST_OFF
+}
+
+// comfort.cabin.set_preconditioning_temperature
+message PreconditioningTemperatureRequest {
+  optional float temperature = 1; // °C; the app sends LO (0) as an empty payload, and the vehicle reads both as 0
+}
+
+enum CabinSurfaceStatus {
+  CABIN_SURFACE_STATUS_UNSPECIFIED = 0;
+  CABIN_SURFACE_OFF = 1;
+  CABIN_SURFACE_ON = 2;
+}
+
+// comfort.cabin.set_cabin_surface
+message CabinSurfaceRequest {
+  CabinSurface surface = 1;
+  ConditioningLevel level = 2;
+  CabinSurfaceStatus status = 3;
+  ConditioningType type = 4;
 }
 
 // comfort.cabin.pet_mode_status

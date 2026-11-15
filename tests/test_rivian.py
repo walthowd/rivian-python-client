@@ -3,7 +3,9 @@
 # pylint: disable=protected-access
 from __future__ import annotations
 
+import asyncio
 import base64
+import gc
 import json
 import uuid
 from datetime import UTC, date, datetime
@@ -32,6 +34,7 @@ from rivian.exceptions import (
 )
 from rivian.parallax import UNLOCK_RVM, encode_unlock
 from rivian.parallax.proto import command_pb2, operation_pb2
+from rivian.rivian import _CHARGING_NETWORK_IDS
 from rivian.utils import generate_key_pair
 
 from .responses import (
@@ -42,6 +45,7 @@ from .responses import (
     DELETE_DEPARTURE_SCHEDULE_RESPONSE,
     DEPART_NOW_RESPONSE,
     OTP_TOKEN_RESPONSE,
+    PLACES_RESPONSE,
     SEND_LOCATION_TO_VEHICLE_RESPONSE,
     SEND_PARALLAX_COMMAND_RESPONSE,
     SEND_VEHICLE_OPERATION_RESPONSE,
@@ -443,8 +447,182 @@ async def test_send_location_to_vehicle(aresponses: ResponsesMockServer) -> None
         assert requests[0]["variables"] == {
             "str": "123 Main St, Springfield, IL",
             "vehicleId": "vehicle_id",
+            "requiresWakeup": True,
         }
         await rivian.close()
+
+
+async def test_trips(aresponses: ResponsesMockServer) -> None:
+    """Test sending and ending a trip."""
+    requests = capture_requests(
+        aresponses,
+        {"data": {"sendTripToVehicle": True}},
+        {"data": {"sendTripToVehicle": False}},
+        {"data": {"sendParallaxPayload": {"success": True}}},
+        {"data": {"sendParallaxPayload": None}},
+    )
+    async with aiohttp.ClientSession():
+        rivian = Rivian(
+            csrf_token="csrf",
+            app_session_token="token",
+            user_session_token="token",
+        )
+
+        stops = [("Stadium", 39.05, -94.48)]
+        assert await rivian.send_trip_to_vehicle("vehicle_id", (40.1, -92.5), stops, 30)
+        attrs = requests[0]["variables"]["attrs"]
+        waypoints = attrs["waypoints"]
+        assert [w["address"]["name"] for w in waypoints] == [
+            "Vehicle location",
+            "Stadium",
+        ]
+        assert waypoints[-1]["minArrivalSoC"] == 30
+        assert "minArrivalSoC" not in waypoints[0]
+        assert [n["networkId"] for n in attrs["preferences"]["networks"]] == list(
+            _CHARGING_NETWORK_IDS
+        )
+        assert not await rivian.send_trip_to_vehicle("vehicle_id", (40.1, -92.5), stops)
+        for bad in ({"stops": []}, {"min_arrival_soc": 101}):
+            with pytest.raises(RivianBadRequestError):
+                await rivian.send_trip_to_vehicle(
+                    "vehicle_id", (0, 0), **({"stops": stops} | bad)
+                )
+
+        assert await rivian.end_trip("vehicle_id", "user")
+        assert requests[2]["variables"]["meta"] == {
+            "isVehicleModelOp": False,
+            "model": "c2v_navigation.trip_copilot.updated_trip",
+            "requiresWakeup": True,
+            "vehicleId": "vehicle_id",
+        }
+        assert not await rivian.end_trip("vehicle_id", "user")
+
+
+async def test_start_gear_guard_live_stream(aresponses: ResponsesMockServer) -> None:
+    """Test starting a Gear Guard live stream."""
+    requests = capture_requests(
+        aresponses,
+        SEND_PARALLAX_COMMAND_RESPONSE,
+        {"data": {"sendParallaxPayload": None}},
+        SEND_PARALLAX_COMMAND_RESPONSE,
+        SEND_PARALLAX_COMMAND_RESPONSE,
+        {"data": {"sendParallaxPayload": None}},
+    )
+    vehicle_key, private_key = generate_key_pair()
+    keys = {
+        "identity_id": "identity_id",
+        "vehicle_key": vehicle_key,
+        "private_key": private_key,
+    }
+    live = {"endpoint": "wss://kinesis", "role": "VIEWER", "iceServers": []}
+    async with aiohttp.ClientSession():
+        rivian = Rivian(
+            csrf_token="csrf",
+            app_session_token="token",
+            user_session_token="token",
+        )
+        subscriptions: list[dict[str, Any]] = []
+        unsubscribe = AsyncMock()
+
+        async def subscribe(
+            payload: dict[str, Any], callback: Any, _: str, on_error: Any
+        ) -> Any:
+            subscriptions.append(payload)
+            callback({"payload": {"data": {"gearGuardLiveConfig": live}}})
+            return unsubscribe
+
+        rivian._start_subscription = subscribe  # type: ignore[method-assign]
+        config = await rivian.start_gear_guard_live_stream("vehicle_id", "rear", **keys)
+        assert config == live
+        _, operation = decode_parallax_command(requests[0])
+        assert operation.rvm == "security.video_monitoring.start_live_streaming"
+        # The config is routed by the start command's id
+        assert subscriptions[0]["variables"]["commandId"] == operation.command_id.hex()
+
+        # A rejected start returns None and still ends the subscription
+        assert not await rivian.start_gear_guard_live_stream("vehicle_id", **keys)
+        assert unsubscribe.await_count == 2
+        with pytest.raises(RivianBadRequestError):
+            await rivian.start_gear_guard_live_stream("vehicle_id", "roof", **keys)
+
+        # A refused start fails straight away instead of timing out
+        async def refuse(
+            payload: dict[str, Any], callback: Any, _: str, on_error: Any
+        ) -> Any:
+            on_error(
+                {"payload": [{"extensions": {"reason": "VEHICLE_COMMAND_FORBIDDEN"}}]}
+            )
+            return unsubscribe
+
+        rivian._start_subscription = refuse  # type: ignore[method-assign]
+        with pytest.raises(RivianApiException, match="VEHICLE_COMMAND_FORBIDDEN"):
+            await rivian.start_gear_guard_live_stream("vehicle_id", timeout=30, **keys)
+
+        # An error payload sent as an object instead of a list still fails the start
+        async def refuse_object(
+            payload: dict[str, Any], callback: Any, _: str, on_error: Any
+        ) -> Any:
+            on_error({"payload": {"extensions": {"reason": "VEHICLE_ASLEEP"}}})
+            return unsubscribe
+
+        rivian._start_subscription = refuse_object  # type: ignore[method-assign]
+        with pytest.raises(RivianApiException, match="VEHICLE_ASLEEP"):
+            await rivian.start_gear_guard_live_stream("vehicle_id", timeout=30, **keys)
+
+        # A refusal before a rejected start is read, so asyncio doesn't log it
+        loop = asyncio.get_running_loop()
+        unread: list[dict[str, Any]] = []
+        loop.set_exception_handler(lambda _, context: unread.append(context))
+        try:
+            rivian._start_subscription = refuse  # type: ignore[method-assign]
+            assert not await rivian.start_gear_guard_live_stream("vehicle_id", **keys)
+            gc.collect()
+        finally:
+            loop.set_exception_handler(None)
+        assert not unread
+
+
+async def test_search_places(aresponses: ResponsesMockServer) -> None:
+    """Test searching for places."""
+    requests = capture_requests(aresponses, PLACES_RESPONSE, {"data": {"places": None}})
+    async with aiohttp.ClientSession():
+        rivian = Rivian(
+            csrf_token="csrf",
+            app_session_token="token",
+            user_session_token="token",
+        )
+
+        results = await rivian.search_places("REI", 40.175, -92.591)
+        assert results == PLACES_RESPONSE["data"]["places"]["results"]
+        assert requests[0]["variables"]["params"] == {
+            "query": "REI",
+            "userLocation": {"latitude": 40.175, "longitude": -92.591},
+            "autocomplete": "None",
+        }
+        assert await rivian.search_places("REI", 40.175, -92.591) == []
+
+
+async def test_suggest_places(aresponses: ResponsesMockServer) -> None:
+    """Test suggesting search texts for partial text."""
+    predictions = [{"query": "restaurants"}, {"query": "Red Lobster"}]
+    requests = capture_requests(
+        aresponses,
+        {"data": {"places": {"queryPredictions": predictions}}},
+        {"data": {"places": None}},
+    )
+    async with aiohttp.ClientSession():
+        rivian = Rivian(
+            csrf_token="csrf",
+            app_session_token="token",
+            user_session_token="token",
+        )
+
+        assert await rivian.suggest_places("RE", 40.175, -92.591) == [
+            "restaurants",
+            "Red Lobster",
+        ]
+        assert requests[0]["variables"]["params"]["autocomplete"] == "Place"
+        assert await rivian.suggest_places("RE", 40.175, -92.591) == []
 
 
 async def test_subscribe_for_departure_schedules() -> None:
@@ -751,6 +929,34 @@ async def test_send_vehicle_command_requires_level(command: VehicleCommand) -> N
             command, "vehicle_id", "phone_id", "identity_id", "vehicle_key", ""
         )
     await rivian.close()
+
+
+@pytest.mark.parametrize(
+    ("command", "params"),
+    [
+        (VehicleCommand.CABIN_PRECONDITIONING_SET_TEMP, {"HVAC_set_temp": 30}),
+        (VehicleCommand.CABIN_PRECONDITIONING_SET_TEMP, {"HVAC_set_temp": "warm"}),
+        (VehicleCommand.CHARGING_LIMITS, {"SOC_limit": 40}),
+        (VehicleCommand.CHARGING_LIMITS, {"SOC_limit": 80.5}),
+        (VehicleCommand.CHARGING_LIMITS, None),
+        (VehicleCommand.CABIN_HVAC_STEERING_HEAT, {"level": 5}),
+    ],
+)
+def test_validate_vehicle_command(
+    command: VehicleCommand, params: dict[str, Any] | None
+) -> None:
+    """Invalid params are rejected the same way for either way of sending."""
+    with pytest.raises(RivianBadRequestError):
+        Rivian.validate_vehicle_command(command, params)
+
+
+def test_validate_vehicle_command_keeps_params() -> None:
+    """Validation leaves the params alone; `send_vehicle_command` converts the temperature."""
+    params = {"HVAC_set_temp": 21}
+    Rivian.validate_vehicle_command(
+        VehicleCommand.CABIN_PRECONDITIONING_SET_TEMP, params
+    )
+    assert params == {"HVAC_set_temp": 21}
 
 
 async def test_graphql_errors(aresponses: ResponsesMockServer) -> None:

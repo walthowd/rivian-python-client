@@ -7,6 +7,30 @@ from typing import Any, Final
 from .core import RVMDecoder, _enum, _present
 from .proto import security_pb2
 
+START_LIVE_STREAMING_RVM: Final = "security.video_monitoring.start_live_streaming"
+ENABLE_PANIC_RVM: Final = "security.alarm.enable_panic"
+DISABLE_PANIC_RVM: Final = "security.alarm.disable_panic"
+ENABLE_VIDEO_MONITORING_RVM: Final = "security.video_monitoring.enable_video_monitoring"
+DISABLE_VIDEO_MONITORING_RVM: Final = (
+    "security.video_monitoring.disable_video_monitoring"
+)
+
+GEAR_GUARD_CAMERAS: Final[dict[str, security_pb2.GearGuardCamera]] = {
+    "front": security_pb2.GEAR_GUARD_CAMERA_FRONT,
+    "bed": security_pb2.GEAR_GUARD_CAMERA_BED,
+    "left": security_pb2.GEAR_GUARD_CAMERA_LEFT,
+    "right": security_pb2.GEAR_GUARD_CAMERA_RIGHT,
+    "rear": security_pb2.GEAR_GUARD_CAMERA_REAR,
+    "interior": security_pb2.GEAR_GUARD_CAMERA_INTERIOR,
+}
+
+
+def encode_live_streaming(camera: str, device_id: str) -> bytes:
+    """Encode a security.video_monitoring.start_live_streaming payload."""
+    return security_pb2.LiveStreamingRequest(
+        camera=GEAR_GUARD_CAMERAS[camera], device_id=device_id
+    ).SerializeToString()
+
 
 @RVMDecoder.register("security.access.passive_entry", security_pb2.PassiveEntry)
 def decode_passive_entry(_m: security_pb2.PassiveEntry) -> dict[str, Any]:

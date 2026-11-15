@@ -28,6 +28,12 @@ class PreconditioningType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     PRECONDITIONING_TYPE_SCHEDULED: _ClassVar[PreconditioningType]
     PRECONDITIONING_TYPE_AUTO_CABIN_VENTILATION: _ClassVar[PreconditioningType]
 
+class Action(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    ACTION_UNSPECIFIED: _ClassVar[Action]
+    ACTION_ON: _ClassVar[Action]
+    ACTION_OFF: _ClassVar[Action]
+
 class ClimateHoldStatusValue(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     CLIMATE_HOLD_STATUS_UNSPECIFIED: _ClassVar[ClimateHoldStatusValue]
@@ -57,6 +63,12 @@ class DefrostStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DEFROST_ACTIVE: _ClassVar[DefrostStatus]
     DEFROST_DEFOG_DEFROST: _ClassVar[DefrostStatus]
     DEFROST_OFF: _ClassVar[DefrostStatus]
+
+class CabinSurfaceStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    CABIN_SURFACE_STATUS_UNSPECIFIED: _ClassVar[CabinSurfaceStatus]
+    CABIN_SURFACE_OFF: _ClassVar[CabinSurfaceStatus]
+    CABIN_SURFACE_ON: _ClassVar[CabinSurfaceStatus]
 
 class PetModeCabinClimate(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -123,6 +135,9 @@ PRECONDITIONING_TYPE_USER_SELECTED: PreconditioningType
 PRECONDITIONING_TYPE_SCREEN_PROTECTION: PreconditioningType
 PRECONDITIONING_TYPE_SCHEDULED: PreconditioningType
 PRECONDITIONING_TYPE_AUTO_CABIN_VENTILATION: PreconditioningType
+ACTION_UNSPECIFIED: Action
+ACTION_ON: Action
+ACTION_OFF: Action
 CLIMATE_HOLD_STATUS_UNSPECIFIED: ClimateHoldStatusValue
 CLIMATE_HOLD_STATUS_UNAVAILABLE: ClimateHoldStatusValue
 CLIMATE_HOLD_STATUS_OFF: ClimateHoldStatusValue
@@ -141,6 +156,9 @@ DEFROST_DEFOG: DefrostStatus
 DEFROST_ACTIVE: DefrostStatus
 DEFROST_DEFOG_DEFROST: DefrostStatus
 DEFROST_OFF: DefrostStatus
+CABIN_SURFACE_STATUS_UNSPECIFIED: CabinSurfaceStatus
+CABIN_SURFACE_OFF: CabinSurfaceStatus
+CABIN_SURFACE_ON: CabinSurfaceStatus
 PET_MODE_CABIN_CLIMATE_COMFORTABLE: PetModeCabinClimate
 PET_MODE_CABIN_CLIMATE_COLD: PetModeCabinClimate
 PET_MODE_CABIN_CLIMATE_HOT: PetModeCabinClimate
@@ -238,6 +256,12 @@ class ClimateHoldSetting(_message.Message):
     duration: int
     def __init__(self, duration: _Optional[int] = ...) -> None: ...
 
+class ActionRequest(_message.Message):
+    __slots__ = ("action",)
+    ACTION_FIELD_NUMBER: _ClassVar[int]
+    action: Action
+    def __init__(self, action: _Optional[_Union[Action, str]] = ...) -> None: ...
+
 class ClimateHoldStatus(_message.Message):
     __slots__ = ("status", "availability", "unavailability_reason", "end_time")
     class EndTime(_message.Message):
@@ -260,6 +284,30 @@ class DefrostDefogStatus(_message.Message):
     STATUS_FIELD_NUMBER: _ClassVar[int]
     status: DefrostStatus
     def __init__(self, status: _Optional[_Union[DefrostStatus, str]] = ...) -> None: ...
+
+class DefrostDefogRequest(_message.Message):
+    __slots__ = ("status",)
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    status: DefrostStatus
+    def __init__(self, status: _Optional[_Union[DefrostStatus, str]] = ...) -> None: ...
+
+class PreconditioningTemperatureRequest(_message.Message):
+    __slots__ = ("temperature",)
+    TEMPERATURE_FIELD_NUMBER: _ClassVar[int]
+    temperature: float
+    def __init__(self, temperature: _Optional[float] = ...) -> None: ...
+
+class CabinSurfaceRequest(_message.Message):
+    __slots__ = ("surface", "level", "status", "type")
+    SURFACE_FIELD_NUMBER: _ClassVar[int]
+    LEVEL_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    surface: CabinSurface
+    level: ConditioningLevel
+    status: CabinSurfaceStatus
+    type: ConditioningType
+    def __init__(self, surface: _Optional[_Union[CabinSurface, str]] = ..., level: _Optional[_Union[ConditioningLevel, str]] = ..., status: _Optional[_Union[CabinSurfaceStatus, str]] = ..., type: _Optional[_Union[ConditioningType, str]] = ...) -> None: ...
 
 class PetModeStatus(_message.Message):
     __slots__ = ("status", "temperature_status", "cabin_climate")
